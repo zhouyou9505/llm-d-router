@@ -20,6 +20,7 @@ package epp
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -58,8 +59,8 @@ const (
 	inferenceObjectiveWithPriority4 = "inference-objective-with-priority-4"
 )
 
-// repoRootPath is the on-disk path to this repository. Hermetic tests use the
-// local CRDs and fixtures so API group migrations are exercised before CI.
+// repoRootPath is the on-disk path to this repository. Hermetic tests use local
+// llm-d CRDs and fixtures so API group migrations are exercised before CI.
 var repoRootPath string
 
 func TestMain(m *testing.M) {
@@ -70,11 +71,21 @@ func TestMain(m *testing.M) {
 		panic("failed to locate hermetic test source file")
 	}
 	repoRootPath = filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	crdPath := filepath.Join(repoRootPath, "config", "crd", "bases")
+
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}",
+		"sigs.k8s.io/gateway-api-inference-extension").Output()
+	if err != nil {
+		panic(fmt.Sprintf("failed to locate gateway-api-inference-extension module: %v", err))
+	}
+	gaieModulePath := strings.TrimSpace(string(out))
+	crdPaths := []string{
+		filepath.Join(gaieModulePath, "config", "crd", "bases", "inference.networking.k8s.io_inferencepools.yaml"),
+		filepath.Join(repoRootPath, "config", "crd", "bases"),
+	}
 
 	// 1. EnvTest Setup (API Server + Etcd)
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdPath},
+		CRDDirectoryPaths:     crdPaths,
 		ErrorIfCRDPathMissing: true,
 	}
 	cfg, err := testEnv.Start()
