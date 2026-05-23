@@ -43,13 +43,6 @@ const (
 	streamingRespPrefix = "data: "
 	streamingEndMsg     = "data: [DONE]"
 
-	// OpenAI API object types
-	objectTypeResponse            = "response"
-	objectTypeConversation        = "conversation"
-	objectTypeChatCompletion      = "chat.completion"
-	objectTypeChatCompletionChunk = "chat.completion.chunk"
-	objectTypeTextCompletion      = "text_completion"
-
 	contentType = "content-type"
 	// The base media type for Server-Sent Events. We check for this substring
 	// to account for optional parameters like "; charset=utf-8" often appended by proxies.
@@ -278,10 +271,28 @@ func extractUsage(responseBytes []byte) (*fwkrh.Usage, error) {
 			// Malformed upstream response: "usage" present but not a JSON object.
 			return nil, nil //nolint:nilnil
 		}
-		objectType, _ := responseBody["object"].(string)
-		usage := extractUsageByAPIType(usg, objectType)
-		if usg["prompt_token_details"] != nil {
-			if detailsMap, ok := usg["prompt_token_details"].(map[string]any); ok {
+
+		usage := fwkrh.Usage{}
+
+		// Chat/Completions APIs use prompt_tokens. Responses/Conversations APIs use input_tokens.
+		for _, inputTokens := range []string{"prompt_tokens", "input_tokens"} {
+			if v, ok := usg[inputTokens]; ok && v != nil {
+				usage.PromptTokens = toInt(v)
+				break
+			}
+		}
+
+		// Chat/Completions APIs use completion_tokens. Responses/Conversations APIs use output_tokens.
+		for _, outputTokens := range []string{"completion_tokens", "output_tokens"} {
+			if v, ok := usg[outputTokens]; ok && v != nil {
+				usage.CompletionTokens = toInt(v)
+				break
+			}
+		}
+
+		// Chat/Completions APIs use prompt_tokens_details. Responses/Conversations APIs use input_tokens_details.
+		for _, details := range []string{"prompt_tokens_details", "input_tokens_details"} {
+			if detailsMap, ok := usg[details].(map[string]any); ok {
 				if cachedTokens, ok := detailsMap["cached_tokens"]; ok {
 					usage.PromptTokenDetails = &fwkrh.PromptTokenDetails{
 						CachedTokens: toInt(cachedTokens),
@@ -289,55 +300,16 @@ func extractUsage(responseBytes []byte) (*fwkrh.Usage, error) {
 				}
 			}
 		}
+
+		// total_tokens field name is consistent across all API types.
+		if v, ok := usg["total_tokens"]; ok && v != nil {
+			usage.TotalTokens = toInt(v)
+		}
+
 		return &usage, nil
 	}
 	// No usage data
 	return nil, nil //nolint:nilnil
-}
-
-// extractUsageByAPIType extracts usage statistics using the appropriate field names
-// based on the OpenAI API type identified by the "object" field.
-func extractUsageByAPIType(usg map[string]any, objectType string) fwkrh.Usage {
-	usage := fwkrh.Usage{}
-
-	switch {
-	case strings.HasPrefix(objectType, objectTypeResponse) || strings.HasPrefix(objectType, objectTypeConversation):
-		// Responses/Conversations APIs use input_tokens/output_tokens
-		if v, ok := usg["input_tokens"]; ok && v != nil {
-			usage.PromptTokens = toInt(v)
-		}
-		if v, ok := usg["output_tokens"]; ok && v != nil {
-			usage.CompletionTokens = toInt(v)
-		}
-	case objectType == objectTypeChatCompletion || objectType == objectTypeChatCompletionChunk || objectType == objectTypeTextCompletion:
-		// Traditional APIs use prompt_tokens/completion_tokens
-		if v, ok := usg["prompt_tokens"]; ok && v != nil {
-			usage.PromptTokens = toInt(v)
-		}
-		if v, ok := usg["completion_tokens"]; ok && v != nil {
-			usage.CompletionTokens = toInt(v)
-		}
-	default:
-		// Fallback: try both field naming conventions
-		if v, ok := usg["input_tokens"]; ok && v != nil {
-			usage.PromptTokens = toInt(v)
-		} else if v, ok := usg["prompt_tokens"]; ok && v != nil {
-			usage.PromptTokens = toInt(v)
-		}
-
-		if v, ok := usg["output_tokens"]; ok && v != nil {
-			usage.CompletionTokens = toInt(v)
-		} else if v, ok := usg["completion_tokens"]; ok && v != nil {
-			usage.CompletionTokens = toInt(v)
-		}
-	}
-
-	// total_tokens field name is consistent across all API types
-	if v, ok := usg["total_tokens"]; ok && v != nil {
-		usage.TotalTokens = toInt(v)
-	}
-
-	return usage
 }
 
 // Example message if "stream_options": {"include_usage": "true"} is included in the request:
