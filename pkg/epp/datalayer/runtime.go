@@ -415,6 +415,19 @@ func (r *Runtime) ReleaseEndpoint(ep fwkdl.Endpoint) {
 	}
 }
 
+// UpdateEndpoint dispatches an add/update lifecycle event for an existing endpoint.
+func (r *Runtime) UpdateEndpoint(ctx context.Context, ep fwkdl.Endpoint) {
+	if ep == nil || ep.GetMetadata() == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logger, _ := logr.FromContext(ctx)
+	logger = logger.WithValues("endpoint", ep.GetMetadata().GetNamespacedName())
+	r.dispatchEndpointEvent(ctx, logger, fwkdl.EndpointEvent{Type: fwkdl.EventAddOrUpdate, Endpoint: ep})
+}
+
 // dispatchEndpointEvent routes an endpoint lifecycle event to all registered
 // EndpointSources and their extractors.
 func (r *Runtime) dispatchEndpointEvent(ctx context.Context, logger logr.Logger, event fwkdl.EndpointEvent) {

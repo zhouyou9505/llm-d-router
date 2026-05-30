@@ -66,6 +66,8 @@ func (f *PodMetricsFactory) NewEndpoint(parentCtx context.Context, metadata *fwk
 	return pm
 }
 
+func (*PodMetricsFactory) UpdateEndpoint(context.Context, fwkdl.Endpoint) {}
+
 func (f *PodMetricsFactory) ReleaseEndpoint(ep fwkdl.Endpoint) {
 	if pm, ok := ep.(*podMetrics); ok {
 		pm.stopRefreshLoop()
