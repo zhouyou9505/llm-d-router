@@ -30,6 +30,7 @@ import (
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 	fwksched "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/openai"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/sglanghttp"
 )
 
 // A chat-completions usage line over maxSSELineBytes must still record its usage
@@ -137,7 +138,12 @@ func TestScanDroppedSSEUsage(t *testing.T) {
 			want: fwkrequest.Usage{},
 		},
 		{
-			name: "no usage object, meta_info style (not covered)",
+			name: "sglang meta_info",
+			line: `data: {"text":"hi","meta_info":{"prompt_tokens":3,"completion_tokens":4,"finish_reason":{"type":"stop"}}}`,
+			want: fwkrequest.Usage{PromptTokens: 3, CompletionTokens: 4, TotalTokens: 7},
+		},
+		{
+			name: "sglang meta_info intermediate frame skipped",
 			line: `data: {"text":"hi","meta_info":{"prompt_tokens":3,"completion_tokens":4}}`,
 			want: fwkrequest.Usage{},
 		},
@@ -365,4 +371,33 @@ func TestSalvagedUsageWinsOverEarlierParsedLine(t *testing.T) {
 	assert.Equal(t, 999, reqCtx.Usage.PromptTokens, "the dropped oversized line is the last usage event and must win")
 	assert.Equal(t, 999, reqCtx.Usage.CompletionTokens)
 	assert.Equal(t, 1998, reqCtx.Usage.TotalTokens)
+}
+
+// An SGLang /generate stream reports usage under meta_info instead of usage;
+// an oversized line carrying the terminal meta_info must still be salvaged.
+func TestOversizedSGLangMetaInfoSalvaged(t *testing.T) {
+	t.Parallel()
+
+	pad := strings.Repeat("x", maxSSELineBytes+1024)
+	stream := `data: {"text":"` + pad + `","meta_info":{"prompt_tokens":128,"completion_tokens":256,"cached_tokens":64,"finish_reason":{"type":"stop"}}}` + "\n" +
+		"data: [DONE]"
+
+	server := &StreamingServer{
+		parserRegistry: NewParserRegistry([]fwkrh.Parser{sglanghttp.NewSGLangHTTPParser()}, logr.Discard()),
+		director:       &mockDirector{},
+	}
+	reqCtx := &RequestContext{
+		Response:          &Response{Headers: map[string]string{"content-type": "text/event-stream"}},
+		SchedulingRequest: &fwksched.InferenceRequest{FairnessID: reqcommon.DefaultFairnessID},
+	}
+	for i := 0; i < len(stream); i += 65536 {
+		end := min(i+65536, len(stream))
+		server.HandleResponseBody(context.Background(), reqCtx, []byte(stream[i:end]), end == len(stream))
+	}
+
+	assert.Equal(t, 128, reqCtx.Usage.PromptTokens, "prompt_tokens must be salvaged from the dropped meta_info line")
+	assert.Equal(t, 256, reqCtx.Usage.CompletionTokens)
+	assert.Equal(t, 384, reqCtx.Usage.TotalTokens)
+	require.NotNil(t, reqCtx.Usage.PromptTokenDetails)
+	assert.Equal(t, 64, reqCtx.Usage.PromptTokenDetails.CachedTokens)
 }

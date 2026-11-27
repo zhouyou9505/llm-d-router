@@ -171,6 +171,7 @@ const (
 // cache_creation_input_tokens.
 const (
 	FieldUsage                    = "usage"
+	FieldMetaInfo                 = "meta_info" // SGLang reports token usage under meta_info, not usage
 	FieldPromptTokens             = "prompt_tokens"
 	FieldCompletionTokens         = "completion_tokens"
 	FieldInputTokens              = "input_tokens"
